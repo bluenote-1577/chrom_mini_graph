@@ -300,7 +300,10 @@ fn main() {
                 .unwrap();
             //Need to reverse the read strand so that it is "forward". Bad mutability
             //design pattern here will change TODO
-            if forward_strand == false {
+            //Only for cicular do we do this because chain_seeds doesn't change strandedness for
+            //cicular = true (because chain_seeds tries both strands). But for cicular = false, we
+            //only try one strand with the most anchors -- thus we already reverse strandedness.
+            if forward_strand == false  && circular{
                 for node in seeds2.iter_mut() {
                     node.order = qlen as u32 - node.order - 1;
                     //            for child_id in node.child_nodes.iter_mut(){

@@ -274,7 +274,9 @@ pub fn add_align_to_graph(
 //            dbg!(&kmer1r,&kmer2r,&kmer1q,&kmer2q);
 //        }
 
-        //        dbg!(anchors[i], anchors[i+1], &kmer1r, &kmer2r, &kmer1q, &kmer2q);
+        if !q_adjacent || !r_adjacent{
+//            dbg!(anchors[i], anchors[i+1], &kmer1r, &kmer2r, &kmer1q, &kmer2q);
+        }
 
         if kmer1r.actual_ref_positions.len() > 0 && i == 0{
             kmer1r
