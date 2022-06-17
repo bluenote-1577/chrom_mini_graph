@@ -14,9 +14,10 @@ use smallvec::SmallVec;
 use std::fs::File;
 use std::hash::{Hash as _Hash, Hasher as _Hasher};
 use std::io::{BufRead, BufReader};
+use rust_htslib::faidx::Reader;
 
 pub fn get_masked_kmers(
-    s: &DnaString,
+    s: &(String, String),
     w: usize,
     k: usize,
     s_sync: usize,
@@ -32,10 +33,15 @@ pub fn get_masked_kmers(
             minimizer_seeds(s, w, k, 100, &FxHashSet::default(), frequent_kmers, false);
         seeds1 = seeds;
     } else {
-        let (seeds, _p1) = 
-            open_sync_seeds(s, k, t, s_sync, 100, &FxHashSet::default(), frequent_kmers, false);
+        let (seeds, _p1) =
+            minimizer_seeds(s, w, k, 100, &FxHashSet::default(), frequent_kmers, false);
         seeds1 = seeds;
     }
+    //} else {
+        //let (seeds, _p1) = 
+            //open_sync_seeds(s, k, t, s_sync, 100, &FxHashSet::default(), frequent_kmers, false);
+        //seeds1 = seeds;
+    //}
     let mut kmer_count_dict = FxHashMap::default();
     for node in seeds1.into_iter() {
         let count_num = kmer_count_dict.entry(node.kmer).or_insert(0);
@@ -58,9 +64,19 @@ fn position_min<T: Ord>(slice: &[T]) -> Option<usize> {
         .max_by(|(_, value0), (_, value1)| value1.cmp(value0))
         .map(|(idx, _)| idx)
 }
-
+fn get_dnastring(reader: &Reader, i: usize, k: usize, chromosome: &String) -> DnaString {
+    let chromosome_ref: &str = chromosome.as_ref();
+    //println!("Reading {}:{}-{}",chromosome, i, i+k);
+    let slice = match reader.fetch_seq(chromosome_ref, i, i+k) {
+        Ok(x) => x,
+        Err(err) => {
+            panic!("failed to read chromosome {}\n{:?}",chromosome, err);
+        }
+    };
+    DnaString::from_acgt_bytes(slice)
+}
 pub fn minimizer_seeds(
-    s: &DnaString,
+    s: &(String, String),
     w: usize,
     k: usize,
     samp_freq: usize,
@@ -76,12 +92,16 @@ pub fn minimizer_seeds(
     let mut running_pos = 0;
     let mut min_running_pos = usize::MAX;
     let mut window_hashes = vec![0; w];
-    if s.len() < k + 1 {
-        return (vec![], vec![]);
-    }
+    //if s.len() < k + 1 {
+        //return (vec![], vec![]);
+    //}
+    let reader = Reader::from_path(&s.0).unwrap();
     let mut num_samp_coord = 0;
-    for i in 0..s.len() - k + 1 {
-        let kmer: Kmer16 = s.slice(i, i + k).get_kmer(0);
+    let mut i:usize = 0;
+    loop {
+        let dnastring = get_dnastring(&reader, i, k, &s.1);
+        if dnastring.len() < k { break };
+        let kmer: Kmer16 = dnastring.get_kmer(0);
         let rc_kmer = kmer.rc();
         let hash_kmer;
         if kmer < rc_kmer {
@@ -106,6 +126,7 @@ pub fn minimizer_seeds(
             window_hashes[running_pos] = hash_val;
         }
         if i < w - 1 {
+            i += 1;
             continue;
         }
 
@@ -123,6 +144,7 @@ pub fn minimizer_seeds(
                 } else {
                     running_pos += 1;
                     running_pos %= w;
+                    i += 1;
                     continue;
                 }
             }
@@ -134,8 +156,8 @@ pub fn minimizer_seeds(
         } else {
             offset = running_pos - min_running_pos;
         }
-
-        let kmer: Kmer16 = s.slice(i - offset, i - offset + k).get_kmer(0);
+        let dnastring = get_dnastring(&reader, i-offset, k, &s.1);
+        let kmer: Kmer16 = dnastring.get_kmer(0);
         let canonical;
         let mut node_kmer = kmer.rc();
         if node_kmer < kmer {
@@ -203,6 +225,7 @@ pub fn minimizer_seeds(
 
             minimizer_seeds.push(kmer_node);
         }
+        i += 1;
         //        let pos_vec = minimizer_seeds
         //            .entry(kmer)
         //            .or_insert(FxHashSet::default());
@@ -216,7 +239,8 @@ pub fn minimizer_seeds(
         if i == minimizer_seeds.len() - 1 {
             minimizer_seeds[i].child_nodes.push(0 as u32);
             //TODO this is incorrect -- why isthis incorrect??
-            let dist_on_genome = positions_selected[0] + s.len() as u32 - positions_selected[i];
+            //let dist_on_genome = positions_selected[0] + s.len() as u32 - positions_selected[i];
+            let dist_on_genome = positions_selected[0] + 100000 - positions_selected[i];
             minimizer_seeds[i]
                 .child_edge_distance
                 .push((dist_on_genome as u16, (1, 0)));
@@ -238,7 +262,7 @@ pub fn minimizer_seeds(
 }
 
 pub fn open_sync_seeds(
-    string: &DnaString,
+    string: &(String, String),
     k: usize,
     t: usize,
     s: usize,
@@ -256,13 +280,19 @@ pub fn open_sync_seeds(
     let mut min_running_pos = usize::MAX;
     let mut window_hashes = vec![0; w];
 
-    for i in 0..string.len() - s + 1 {
+    let reader = Reader::from_path(&string.0).unwrap();
+    let mut i = 0;
+    loop {
         let smer;
         if s == 8{
-            smer = string.slice(i, i + s).to_owned();
+            let dnastring = get_dnastring(&reader, i, s, &string.1);
+            smer = dnastring.to_owned();
+            if dnastring.len() < s { break };
         }
         else if s == 10{
-            smer = string.slice(i, i + s).to_owned();
+            let dnastring = get_dnastring(&reader, i, s, &string.1);
+            smer = dnastring.to_owned();
+            if dnastring.len() < s { break };
         }
         else{
             panic!("s must be set to 8 or 10 right now");
@@ -276,6 +306,7 @@ pub fn open_sync_seeds(
         }
         window_hashes[running_pos] = hash(&hash_smer);
         if i < w - 1 {
+            i += 1;
             continue;
         }
 
@@ -293,7 +324,8 @@ pub fn open_sync_seeds(
 
         if running_pos > min_running_pos {
             if running_pos - min_running_pos == t - 1 {
-                let kmer: Kmer16 = string.slice(i - w + 1, i - w + 1 + k).get_kmer(0);
+                let dnastring = get_dnastring(&reader, i-w+1, k, &string.1);
+                let kmer: Kmer16 = dnastring.get_kmer(0);
                 let canonical;
                 let mut node_kmer = kmer.rc();
                 if node_kmer < kmer {
@@ -350,7 +382,8 @@ pub fn open_sync_seeds(
                         (i + 1 - w) as u32 - *positions_selected.last().unwrap() as u32;
                     distance_from_start = i + 1 - w;
                 }
-                let kmer: Kmer16 = string.slice(i + 1 - w, i + 1 + k - w).get_kmer(0);
+                let dnastring = get_dnastring(&reader, i-w+1, k, &string.1);
+                let kmer: Kmer16 = dnastring.get_kmer(0);
                 let canonical;
                 let mut node_kmer = kmer.rc();
                 if node_kmer < kmer {
@@ -391,7 +424,7 @@ pub fn open_sync_seeds(
                 }
             }
         }
-
+        i += 1;
         running_pos += 1;
         running_pos %= w;
     }
